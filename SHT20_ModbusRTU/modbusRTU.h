@@ -2,12 +2,13 @@
    Library      :     modbusRTU
    Description  :     รวบรวมไลบราลี่ที่เกี่ยวข้องกับ Modbus RTU
    Author       :     Tenergy Innovation Co., Ltd.
-   Date         :     7 Mar 2020
-   Revision     :     1.3
+   Date         :     24 May 2020
+   Revision     :     1.4
    Rev1.0       :     Relay ModbusRTU
    Rev1.1       :     SHT20 ModbusRTU (Temp & Humi sensor)
    Rev1.2       :     แก้ปัญหาและปรับปรุงข้อมูลของ SHT20 ModbusRTU
    Rev1.3       :     แก้ปัญหาและปรับปรุงข้อมูลของ status ของ Relay ModbusRTU
+   Rev1.4       :     Read Temp & Humi with one command (sht20ReadTempHumi_modbusRTU)
    www          :     https://www.tenergyinnovation.co.th
    Email        :     uten.boonliam@tenergyinnovation.co.th
    TEL          :     +6689-140-7205
@@ -25,7 +26,7 @@ boolean relayControl_modbusRTU(byte address, byte channel, boolean state);
 byte relayStatus_modbusRTU(byte address, byte channel);
 float_t sht20ReadTemp_modbusRTU(byte address);
 float_t sht20ReadHumi_modbusRTU(byte address);
-
+void sht20ReadTempHumi_modbusRTU(byte address, float *temp, float *humi);
 
  /***********************************************************************
  * FUNCTION:    relayControl_modbusRTU
@@ -644,6 +645,231 @@ float_t sht20ReadHumi_modbusRTU(byte address)
     }    
 }
 
+
+
+/***********************************************************************
+ * FUNCTION:    sht20ReadTempHumi_modbusRTU
+ * DESCRIPTION: อ่านค่าอุณหภูมิและความชื้นในอากาศจากเซนเซอร์ SHT22 ModbusRTU 
+ * PARAMETERS:  byte address, float *temo, float *humi
+ * RETURNED:    none
+ ***********************************************************************/
+void sht20ReadTempHumi_modbusRTU(byte address, float *temp, float *humi)
+{
+    uint16_t _crc = 0xffff;
+    uint16_t _crc_r = 0xffff;
+    uint16_t _temp_hex = 0xffff;
+    uint16_t _humi_hex = 0xffff;
+
+    uint8_t _data_write[8];
+    uint8_t _data_read[20];
+    uint8_t _byte_cnt = 0;
+    uint8_t _data_check[9];
+
+    _data_write[0] = address;
+    _data_write[1] = 0x03;
+    _data_write[2] = 0x00;
+    _data_write[3] = 0x00;
+    _data_write[4] = 0x00;
+    _data_write[5] = 0x02;
+
+    // Serial.printf("dataout[6] = %X %X %X %X %X %X \r\n",_data[0],_data[1],_data[2],_data[3],_data[4],_data[5]);
+
+    // Generate CRC16
+    for(byte _i=0; _i < sizeof(_data_write)-2; _i++){
+        _crc = crc16_update(_crc, _data_write[_i]);
+    } 
+
+    // Insert CRC16 to data byte
+    // Serial.printf("_crc = 0x%02X\r\n",_crc);
+    _data_write[sizeof(_data_write)-1] = _crc >> 8;          
+    _data_write[sizeof(_data_write)-2]= _crc - _data_write[sizeof(_data_write)-1]*0x0100 ;   
+
+    //debug monitoring
+    Serial.printf("Data write(%d): [ ",sizeof(_data_write));
+    for(byte _i=0; _i<sizeof(_data_write); _i++){
+      if( _data_write[_i] > 0x0F ){
+        Serial.printf("0x%X ",_data_write[_i]);
+      }
+      else{
+        Serial.printf("0x0%X ",_data_write[_i]);
+      } 
+    }
+    Serial.printf("]\r\n");
+     
+    /**** Write data ****/ 
+    rs485.flush(); 
+    for(int _i=0; _i<8; _i++) rs485.write(_data_write[_i]);
+    
+    vTaskDelay(300);
+
+
+    /**** Read data ****/
+    if(rs485.available()){
+
+    for(byte _i=0; _i<sizeof(_data_read); _i++) _data_read[_i] = 0x00; //clear buffer
+    _byte_cnt = 0;
+
+    //correct data
+      do{
+          _data_read[_byte_cnt++] = rs485.read();
+          if(_data_read[0] == 0x00){ //แก้ไช bug เนื่องจากอ่านค่าแรกได้ 0x00
+              _byte_cnt =0;
+          }
+      }while(rs485.available()>0);
+      
+
+      /***** Debug monitor ****/
+      Serial.printf("Data read(%d): [ ",_byte_cnt);
+        for(byte _i=0; _i<_byte_cnt; _i++){
+            if( _data_read[_i] > 0x0F ){
+              Serial.printf("0x%X ",_data_read[_i]);
+            }
+            else{
+              Serial.printf("0x0%X ",_data_read[_i]);
+            } 
+        }
+        Serial.println("]");
+    }
+
+
+if(_byte_cnt == 9){
+      _data_check[0] = _data_read[0];
+      _data_check[1] = _data_read[1];
+      _data_check[2] = _data_read[2];
+      _data_check[3] = _data_read[3];
+      _data_check[4] = _data_read[4];
+      _data_check[5] = _data_read[5];
+      _data_check[6] = _data_read[6]; 
+      _data_check[7] = _data_read[7]; 
+      _data_check[8] = _data_read[8]; 
+
+      /***** Debug monitor ****/
+      Serial.printf("Data check(%d): [ ",sizeof(_data_check));
+        for(byte _i=0; _i<sizeof(_data_check); _i++){
+            if( _data_check[_i] > 0x0F ){
+              Serial.printf("0x%X ",_data_check[_i]);
+            }
+            else{
+              Serial.printf("0x0%X ",_data_check[_i]);
+            } 
+        }
+        Serial.println("]");
+    }
+    else if(_byte_cnt == 12){
+      _data_check[0] = _data_read[3];
+      _data_check[1] = _data_read[4];
+      _data_check[2] = _data_read[5];
+      _data_check[3] = _data_read[6];
+      _data_check[4] = _data_read[7];
+      _data_check[5] = _data_read[8];
+      _data_check[6] = _data_read[9]; 
+      _data_check[7] = _data_read[10]; 
+      _data_check[8] = _data_read[11]; 
+
+      /***** Debug monitor ****/
+      Serial.printf("Data check(%d): [ ",sizeof(_data_check));
+        for(byte _i=0; _i<sizeof(_data_check); _i++){
+            if( _data_check[_i] > 0x0F ){
+              Serial.printf("0x%X ",_data_check[_i]);
+            }
+            else{
+              Serial.printf("0x0%X ",_data_check[_i]);
+            } 
+        }
+        Serial.println("]");
+    }
+
+    else if(_byte_cnt == 13){
+      _data_check[0] = _data_read[4];
+      _data_check[1] = _data_read[5];
+      _data_check[2] = _data_read[6];
+      _data_check[3] = _data_read[7];
+      _data_check[4] = _data_read[8];
+      _data_check[5] = _data_read[9];
+      _data_check[6] = _data_read[10]; 
+      _data_check[7] = _data_read[11]; 
+      _data_check[8] = _data_read[12]; 
+
+      /***** Debug monitor ****/
+      Serial.printf("Data check(%d): [ ",sizeof(_data_check));
+        for(byte _i=0; _i<sizeof(_data_check); _i++){
+            if( _data_check[_i] > 0x0F ){
+              Serial.printf("0x%X ",_data_check[_i]);
+            }
+            else{
+              Serial.printf("0x0%X ",_data_check[_i]);
+            } 
+        }
+        Serial.println("]");
+    }
+
+     else if(_byte_cnt == 14){
+      _data_check[0] = _data_read[5];
+      _data_check[1] = _data_read[6];
+      _data_check[2] = _data_read[7];
+      _data_check[3] = _data_read[8];
+      _data_check[4] = _data_read[9];
+      _data_check[5] = _data_read[10];
+      _data_check[6] = _data_read[11]; 
+      _data_check[7] = _data_read[12]; 
+      _data_check[8] = _data_read[13]; 
+
+      /***** Debug monitor ****/
+      Serial.printf("Data check(%d): [ ",sizeof(_data_check));
+        for(byte _i=0; _i<sizeof(_data_check); _i++){
+            if( _data_check[_i] > 0x0F ){
+              Serial.printf("0x%X ",_data_check[_i]);
+            }
+            else{
+              Serial.printf("0x0%X ",_data_check[_i]);
+            } 
+        }
+        Serial.println("]");
+    }
+
+
+    /*** crc check for data read ***/ 
+    _crc = 0xffff;
+    _crc_r = 0xffff;
+    
+    // Generate CRC16
+    for(byte _i=0; _i < sizeof(_data_check)-2; _i++){
+        _crc = crc16_update(_crc, _data_check[_i]);
+    } 
+    Serial.printf("Debug: _crc = 0x%X\r\n",_crc);
+
+    // read crc byte from data_check
+    _crc_r = _data_check[sizeof(_data_check)-1]; //Serial.print(">>"); Serial.println(_crc_r,HEX);
+    _crc_r = _crc_r <<8; //Serial.print(">>"); Serial.println(_crc_r,HEX);
+    _crc_r = _crc_r + _data_check[sizeof(_data_check)-2]; //Serial.print(">>"); Serial.println(_crc_r,HEX);       
+    Serial.printf("Debug: _crc_r = 0x%X\r\n",_crc_r);
+
+    //return ON/OFF status
+    if(_crc_r == _crc)
+    {
+
+      _temp_hex = _data_check[3];  //Serial.printf("Debug: _temp_hex = 0x%X\r\n",_temp_hex);
+      _temp_hex = _temp_hex<<8;   //Serial.printf("Debug: _temp_hex = 0x%X\r\n",_temp_hex);
+      _temp_hex = _temp_hex | _data_check[4]; //Serial.printf("Debug: _temp_hex = 0x%X(%d)\r\n",_temp_hex,_temp_hex);
+
+      _humi_hex = _data_check[5];  //Serial.printf("Debug: _humi_hex = 0x%X\r\n",_humi_hex);
+      _humi_hex = _humi_hex<<8;   //Serial.printf("Debug: _humi_hex = 0x%X\r\n",_humi_hex);
+      _humi_hex = _humi_hex | _data_check[6]; //Serial.printf("Debug: _humi_hex = 0x%X(%d)\r\n",_humi_hex,_humi_hex);
+
+      Serial.printf("Info: Temperature => %.1f\r\n",(float)((float)_temp_hex/10));
+      Serial.printf("Info: Humidity => %.1f\r\n",(float)((float)_humi_hex/10));
+
+      *temp =  (float)((float)_temp_hex/10);
+      *humi =  (float)((float)_humi_hex/10);
+
+    }  
+    else
+    {
+      Serial.printf("Error: crc16");
+       *temp = 0xffff;
+       *humi = 0xffff;
+    }    
+}
  /***********************************************************************
  * FUNCTION:    crc16_update
  * DESCRIPTION: CRC16 check
